@@ -7,6 +7,19 @@ import io
 
 ORDRE_PAS = 100
 TAILLE_MINIATURE = 40
+IMAGE_ACCUEIL = "Présentation.jpg"
+ONGLET_LISTE = 0
+ONGLET_RECHERCHE = 1
+# Disques cliquables de l'image d'accueil : (centre x, centre y, rayon) en fraction
+# de la largeur et de la hauteur de l'image, pour rester valides après redimensionnement.
+DISQUES_ACCUEIL = (
+    (0.186, 0.565, 0.118, ONGLET_LISTE, "Liste des fiches"),
+    (0.505, 0.549, 0.144, ONGLET_RECHERCHE, "Recherche"),
+)
+
+
+def chemin_ressource(nom):
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), nom)
 
 
 def make_miniature(image_blob):
@@ -1135,6 +1148,77 @@ class MonnaiesApp:
             self.root.destroy()
 
 
+class AccueilWindow:
+    """Menu principal : l'image de présentation, dont deux disques sont cliquables."""
+
+    @classmethod
+    def afficher(cls, root, on_choix):
+        try:
+            image = Image.open(chemin_ressource(IMAGE_ACCUEIL))
+        except Exception as e:
+            print(f"Menu d'accueil indisponible : {e}")
+            return False
+        cls(root, image, on_choix)
+        return True
+
+    def __init__(self, root, image, on_choix):
+        self.root = root
+        self.on_choix = on_choix
+        hauteur_max = int(root.winfo_screenheight() * 0.9)
+        if image.height > hauteur_max:
+            image = image.resize(
+                (round(image.width * hauteur_max / image.height), hauteur_max), Image.LANCZOS)
+        self.largeur, self.hauteur = image.size
+        self.photo = ImageTk.PhotoImage(image)
+        root.title("Les monnaies en Terre de Lorraine")
+        root.geometry(f"{self.largeur}x{self.hauteur}"
+                      f"+{(root.winfo_screenwidth() - self.largeur) // 2}+0")
+        root.resizable(False, False)
+        self.canvas = tk.Canvas(root, width=self.largeur, height=self.hauteur, highlightthickness=0)
+        self.canvas.pack()
+        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
+        self.surbrillance = self.canvas.create_oval(0, 0, 0, 0, outline="#FFD700", width=4, state=tk.HIDDEN)
+        self.etiquette = self.canvas.create_text(self.largeur // 2, self.hauteur - 20, text="",
+                                                 fill="#FFD700", font=("Times New Roman", 16, "bold"))
+        self.canvas.bind("<Motion>", self.on_motion)
+        self.canvas.bind("<Button-1>", self.on_click)
+
+    def disque_sous_curseur(self, x, y):
+        for fx, fy, fr, onglet, libelle in DISQUES_ACCUEIL:
+            centre_x, centre_y = fx * self.largeur, fy * self.hauteur
+            rayon = fr * self.largeur
+            if (x - centre_x) ** 2 + (y - centre_y) ** 2 <= rayon ** 2:
+                return centre_x, centre_y, rayon, onglet, libelle
+        return None
+
+    def on_motion(self, event):
+        disque = self.disque_sous_curseur(event.x, event.y)
+        if not disque:
+            self.canvas.itemconfig(self.surbrillance, state=tk.HIDDEN)
+            self.canvas.itemconfig(self.etiquette, text="")
+            self.canvas.config(cursor="")
+            return
+        centre_x, centre_y, rayon, _, libelle = disque
+        self.canvas.coords(self.surbrillance,
+                           centre_x - rayon, centre_y - rayon, centre_x + rayon, centre_y + rayon)
+        self.canvas.itemconfig(self.surbrillance, state=tk.NORMAL)
+        self.canvas.itemconfig(self.etiquette, text=libelle)
+        self.canvas.config(cursor="hand2")
+
+    def on_click(self, event):
+        disque = self.disque_sous_curseur(event.x, event.y)
+        if not disque:
+            return
+        self.canvas.destroy()
+        self.root.resizable(True, True)
+        self.on_choix(self.root, disque[3])
+
+
+def ouvrir_application(root, onglet):
+    app = MonnaiesApp(root)
+    app.notebook.select(onglet)
+
+
 if __name__ == "__main__":
     os.makedirs("data", exist_ok=True)
     init_db()
@@ -1142,5 +1226,6 @@ if __name__ == "__main__":
     root.withdraw()
     migrate_miniatures(root)
     root.deiconify()
-    app = MonnaiesApp(root)
+    if not AccueilWindow.afficher(root, ouvrir_application):
+        ouvrir_application(root, ONGLET_LISTE)
     root.mainloop()
