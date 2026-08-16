@@ -447,7 +447,7 @@ class FicheDetailWindow:
                 if self.fiche_id:
                     cursor.execute('''
                         UPDATE monnaies SET
-                        attribution=?, type=?, valeur_faciale=?, localite=?, periode_annee=?,  -- ✅ Ajout du "?" après periode_annee
+                        attribution=?, type=?, valeur_faciale=?, localite=?, periode_annee=?,
                         legende_avers=?, description_avers=?, legende_revers=?, description_revers=?,
                         atelier=?, metal=?, poids_gr=?, ouvrage_numismatique=?, possession=?, observations=?, image_gravure=?, image_monnaie=?, biographie=?, image_biographie=?,
                         ordre=COALESCE(ordre, 0)
@@ -458,9 +458,7 @@ class FicheDetailWindow:
                         data["legende_avers"], data["description_avers"], data["legende_revers"],
                         data["description_revers"],
                         data["atelier"], data["metal"], data["poids_gr"], data["ouvrage_numismatique"],
-                        data["possession"],
-                        # ✅ Cette valeur était déjà dans le tuple, mais le "?" manquait dans la requête
-                        data["observations"], data["image_gravure"], data["image_monnaie"],
+                        data["possession"], data["observations"], data["image_gravure"], data["image_monnaie"],
                         data["biographie"], data["image_biographie"], self.fiche_id
                     ))
                 else:
@@ -495,7 +493,6 @@ class FicheDetailWindow:
                 conn.commit()
             messagebox.showinfo("Succès", "Fiche enregistrée avec succès !")
             self.parent.load_data()
-            self.parent.load_combobox_values()
             self.load_combobox_values()
             return True
         except sqlite3.Error as e:
@@ -655,7 +652,6 @@ class MonnaiesApp:
         self.create_liste_fiches_tab()
         self.create_recherche_tab()
         self.load_data()
-        self.load_combobox_values()
 
     def apply_ancient_style(self):
         style = ttk.Style()
@@ -681,48 +677,6 @@ class MonnaiesApp:
         style.configure("TEntry", fieldbackground=creme_color, foreground=fg_color, font=("Times New Roman", 10))
         style.configure("TCombobox", fieldbackground=creme_color, foreground=fg_color, font=("Times New Roman", 10))
         style.configure("TScrollbar", background=bg_color, troughcolor=highlight_color)
-
-    def load_combobox_values(self):
-        try:
-            with sqlite3.connect("data/monnaies.db") as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT DISTINCT attribution FROM monnaies WHERE attribution IS NOT NULL ORDER BY attribution")
-                attributions = [row[0] for row in cursor.fetchall() if row[0]]
-                cursor.execute("SELECT DISTINCT type FROM monnaies WHERE type IS NOT NULL ORDER BY type")
-                types = [row[0] for row in cursor.fetchall() if row[0]]
-                cursor.execute(
-                    "SELECT DISTINCT valeur_faciale FROM monnaies WHERE valeur_faciale IS NOT NULL ORDER BY valeur_faciale")
-                valeurs = [row[0] for row in cursor.fetchall() if row[0]]
-                cursor.execute("SELECT DISTINCT localite FROM monnaies WHERE localite IS NOT NULL ORDER BY localite")
-                localites = [row[0] for row in cursor.fetchall() if row[0]]
-                cursor.execute("SELECT DISTINCT atelier FROM monnaies WHERE atelier IS NOT NULL ORDER BY atelier")
-                ateliers = [row[0] for row in cursor.fetchall() if row[0]]
-                cursor.execute("SELECT DISTINCT metal FROM monnaies WHERE metal IS NOT NULL ORDER BY metal")
-                metaux = [row[0] for row in cursor.fetchall() if row[0]]
-            for window in self.root.winfo_children():
-                if isinstance(window, tk.Toplevel):
-                    for child in window.winfo_children():
-                        if isinstance(child, ttk.Frame):
-                            for subchild in child.winfo_children():
-                                if isinstance(subchild, ttk.Frame):
-                                    for widget in subchild.winfo_children():
-                                        if isinstance(widget, ttk.Combobox):
-                                            if hasattr(widget, 'winfo_class') and widget.winfo_class() == 'TCombobox':
-                                                if 'attribution_combobox' in str(widget):
-                                                    widget["values"] = attributions
-                                                elif 'type_combobox' in str(widget):
-                                                    widget["values"] = types
-                                                elif 'valeur_combobox' in str(widget):
-                                                    widget["values"] = valeurs
-                                                elif 'localite_combobox' in str(widget):
-                                                    widget["values"] = localites
-                                                elif 'atelier_combobox' in str(widget):
-                                                    widget["values"] = ateliers
-                                                elif 'metal_combobox' in str(widget):
-                                                    widget["values"] = metaux
-        except sqlite3.Error as e:
-            messagebox.showerror("Erreur", f"Impossible de charger les valeurs des menus déroulants : {e}")
 
     def create_liste_fiches_tab(self):
         title_label = ttk.Label(
@@ -790,33 +744,8 @@ class MonnaiesApp:
                     conn.commit()
                 messagebox.showinfo("Succès", "Fiche supprimée avec succès !")
                 self.load_data()
-                self.load_combobox_values()
             except sqlite3.Error as e:
                 messagebox.showerror("Erreur", f"Impossible de supprimer la fiche : {e}")
-
-    # def delete_fiche(self):
-    #    selected_items = self.tree_liste.selection()
-    #    if not selected_items:
-    #        messagebox.showwarning("Attention", "Veuillez sélectionner une fiche à supprimer.")
-    #        return
-    #    selected_item = selected_items[0]
-    #    fiche_id = self.tree_liste.item(selected_item)["values"][0]
-    #    if messagebox.askyesno("Supprimer", "Voulez-vous vraiment supprimer cette fiche ?"):
-    #        try:
-    #            with sqlite3.connect("data/monnaies.db") as conn:
-    #                conn.execute("PRAGMA foreign_keys = OFF")
-    #                cursor = conn.cursor()
-    #                cursor.execute("DELETE FROM monnaies WHERE id=?", (fiche_id,))
-    #                cursor.execute("SELECT id FROM monnaies ORDER BY ordre")
-    #                rows = cursor.fetchall()
-    #                for new_order, (old_id,) in enumerate(rows, start=0):
-    #                    cursor.execute("UPDATE monnaies SET ordre=? WHERE id=?", (new_order, old_id))
-    #                conn.commit()
-    #            messagebox.showinfo("Succès", "Fiche supprimée avec succès !")
-    #            self.load_data()
-    #            self.load_combobox_values()
-    #        except sqlite3.Error as e:
-    #            messagebox.showerror("Erreur", f"Impossible de supprimer la fiche : {e}")
 
     def create_recherche_tab(self):
         self.recherche_main_frame = ttk.Frame(self.recherche_frame)
@@ -1123,8 +1052,6 @@ class MonnaiesApp:
 
 if __name__ == "__main__":
     os.makedirs("data", exist_ok=True)
-    os.makedirs("images/gravures", exist_ok=True)
-    os.makedirs("images/monnaies", exist_ok=True)
     init_db()
     root = tk.Tk()
     app = MonnaiesApp(root)
