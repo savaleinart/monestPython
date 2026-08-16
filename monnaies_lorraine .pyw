@@ -6,6 +6,86 @@ import os
 import io
 
 ORDRE_PAS = 100
+TAILLE_MINIATURE = 40
+
+
+def make_miniature(image_blob):
+    if not image_blob:
+        return None
+    try:
+        image = Image.open(io.BytesIO(image_blob))
+        image.draft("RGB", (TAILLE_MINIATURE, TAILLE_MINIATURE))
+        image = image.convert("RGB").resize((TAILLE_MINIATURE, TAILLE_MINIATURE), Image.LANCZOS)
+        buffer = io.BytesIO()
+        image.save(buffer, "PNG")
+        return buffer.getvalue()
+    except Exception as e:
+        print(f"Erreur de generation de miniature : {e}")
+        return None
+
+
+def add_miniature_column(conn):
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(monnaies)")
+    colonnes = [row[1] for row in cursor.fetchall()]
+    if "miniature" not in colonnes:
+        cursor.execute("ALTER TABLE monnaies ADD COLUMN miniature BLOB")
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_miniature_manquante ON monnaies(id)
+        WHERE miniature IS NULL AND (image_monnaie IS NOT NULL OR image_gravure IS NOT NULL)
+    """)
+    conn.commit()
+
+
+def migrate_miniatures(root=None):
+    with sqlite3.connect("data/monnaies.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id FROM monnaies
+            WHERE miniature IS NULL AND (image_monnaie IS NOT NULL OR image_gravure IS NOT NULL)
+        """)
+        ids = [row[0] for row in cursor.fetchall()]
+        if not ids:
+            return
+        progression = MigrationProgressWindow(root, len(ids)) if root else None
+        lecteur = conn.cursor()
+        for i, fiche_id in enumerate(ids):
+            lecteur.execute("SELECT image_monnaie, image_gravure FROM monnaies WHERE id=?", (fiche_id,))
+            image_monnaie, image_gravure = lecteur.fetchone()
+            miniature = make_miniature(image_monnaie or image_gravure)
+            if miniature:
+                cursor.execute("UPDATE monnaies SET miniature=? WHERE id=?", (miniature, fiche_id))
+            if progression:
+                progression.update(i + 1)
+        conn.commit()
+        if progression:
+            progression.close()
+
+
+class MigrationProgressWindow:
+    def __init__(self, root, total):
+        self.total = total
+        self.window = tk.Toplevel(root)
+        self.window.title("Préparation des vignettes")
+        self.window.resizable(False, False)
+        ttk.Label(self.window,
+                  text="Génération des vignettes des fiches existantes.\n"
+                       "Cette opération n'a lieu qu'une fois.").pack(padx=20, pady=(15, 5))
+        self.barre = ttk.Progressbar(self.window, length=300, maximum=total)
+        self.barre.pack(padx=20, pady=5)
+        self.etiquette = ttk.Label(self.window, text=f"0 / {total}")
+        self.etiquette.pack(padx=20, pady=(0, 15))
+        self.window.update()
+
+    def update(self, fait):
+        if fait % 25 and fait != self.total:
+            return
+        self.barre["value"] = fait
+        self.etiquette.config(text=f"{fait} / {self.total}")
+        self.window.update()
+
+    def close(self):
+        self.window.destroy()
 
 
 def init_db():
@@ -36,13 +116,15 @@ def init_db():
                     image_monnaie BLOB,
                     biographie TEXT,
                     image_biographie BLOB,
-                    ordre INTEGER DEFAULT 0
+                    ordre INTEGER DEFAULT 0,
+                    miniature BLOB
                 )
             ''')
             conn.commit()
-            return
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_periode ON monnaies(periode_annee)')
-        conn.commit()
+        else:
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_periode ON monnaies(periode_annee)')
+            conn.commit()
+        add_miniature_column(conn)
 
 
 def reorder_all_fiches():
@@ -440,7 +522,8 @@ class FicheDetailWindow:
                 "image_gravure": self.image_gravure_blob,
                 "image_monnaie": self.image_monnaie_blob,
                 "biographie": self.biographie_text_content,
-                "image_biographie": self.biographie_image_blob
+                "image_biographie": self.biographie_image_blob,
+                "miniature": make_miniature(self.image_monnaie_blob or self.image_gravure_blob)
             }
             with sqlite3.connect("data/monnaies.db") as conn:
                 cursor = conn.cursor()
@@ -450,7 +533,7 @@ class FicheDetailWindow:
                         attribution=?, type=?, valeur_faciale=?, localite=?, periode_annee=?,
                         legende_avers=?, description_avers=?, legende_revers=?, description_revers=?,
                         atelier=?, metal=?, poids_gr=?, ouvrage_numismatique=?, possession=?, observations=?, image_gravure=?, image_monnaie=?, biographie=?, image_biographie=?,
-                        ordre=COALESCE(ordre, 0)
+                        miniature=?, ordre=COALESCE(ordre, 0)
                         WHERE id=?
                     ''', (
                         data["attribution"], data["type"], data["valeur_faciale"], data["localite"],
@@ -459,7 +542,7 @@ class FicheDetailWindow:
                         data["description_revers"],
                         data["atelier"], data["metal"], data["poids_gr"], data["ouvrage_numismatique"],
                         data["possession"], data["observations"], data["image_gravure"], data["image_monnaie"],
-                        data["biographie"], data["image_biographie"], self.fiche_id
+                        data["biographie"], data["image_biographie"], data["miniature"], self.fiche_id
                     ))
                 else:
                     if self.insert_after_id:
@@ -474,8 +557,8 @@ class FicheDetailWindow:
                             attribution, type, valeur_faciale, localite, periode_annee,
                             legende_avers, description_avers, legende_revers, description_revers,
                             atelier, metal, poids_gr, ouvrage_numismatique, possession,
-                            observations, image_gravure, image_monnaie, biographie, image_biographie, ordre
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            observations, image_gravure, image_monnaie, biographie, image_biographie, miniature, ordre
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         data["attribution"], data["type"], data["valeur_faciale"], data["localite"],
                         data["periode_annee"],
@@ -483,7 +566,7 @@ class FicheDetailWindow:
                         data["description_revers"],
                         data["atelier"], data["metal"], data["poids_gr"], data["ouvrage_numismatique"],
                         data["possession"], data["observations"], data["image_gravure"], data["image_monnaie"],
-                        data["biographie"], data["image_biographie"], new_order
+                        data["biographie"], data["image_biographie"], data["miniature"], new_order
                     ))
                     self.fiche_id = cursor.lastrowid
                     self.id_entry.config(state="normal")
@@ -647,7 +730,6 @@ class MonnaiesApp:
         self.notebook.add(self.recherche_frame, text="Recherche")
         self.tree_images = {}
         self.tree_images_recherche = {}
-        self.taille_miniature = 40
         self.recherche_dans_resultats_var = tk.BooleanVar()
         self.create_liste_fiches_tab()
         self.create_recherche_tab()
@@ -724,9 +806,7 @@ class MonnaiesApp:
         column = self.tree_liste.identify("column", event.x, event.y)
         if item and column == "#0":
             fiche_id = self.tree_liste.item(item)["values"][0]
-            if fiche_id in self.tree_images:
-                image_blob = self.tree_images[fiche_id][1]
-                self.show_zoomed_image_from_list(image_blob)
+            self.show_zoomed_image_from_list(self.load_image_blob(fiche_id))
 
     def delete_fiche(self):
         selected_items = self.tree_liste.selection()
@@ -822,11 +902,25 @@ class MonnaiesApp:
         column = self.tree_recherche.identify("column", event.x, event.y)
         if item and column == "#0":
             fiche_id = self.tree_recherche.item(item)["values"][0]
-            if fiche_id in self.tree_images_recherche:
-                image_blob = self.tree_images_recherche[fiche_id][1]
-                self.show_zoomed_image_from_list(image_blob)
+            self.show_zoomed_image_from_list(self.load_image_blob(fiche_id))
+
+    @staticmethod
+    def load_image_blob(fiche_id):
+        try:
+            with sqlite3.connect("data/monnaies.db") as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT image_monnaie, image_gravure FROM monnaies WHERE id=?", (fiche_id,))
+                row = cursor.fetchone()
+        except sqlite3.Error as e:
+            messagebox.showerror("Erreur", f"Impossible de charger l'image : {e}")
+            return None
+        if not row:
+            return None
+        return row[0] or row[1]
 
     def show_zoomed_image_from_list(self, image_blob):
+        if not image_blob:
+            return
         try:
             zoom_window = tk.Toplevel(self.root)
             zoom_window.title("Image agrandie")
@@ -845,7 +939,7 @@ class MonnaiesApp:
             with sqlite3.connect("data/monnaies.db") as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT id, attribution, type, valeur_faciale, localite, periode_annee, image_monnaie, image_gravure FROM monnaies ORDER BY ordre")
+                    "SELECT id, attribution, type, valeur_faciale, localite, periode_annee, miniature FROM monnaies ORDER BY ordre")
                 rows = cursor.fetchall()
             for row in self.tree_liste.get_children():
                 self.tree_liste.delete(row)
@@ -853,16 +947,13 @@ class MonnaiesApp:
             if self.notebook.index("current") == 1:
                 self.perform_recherche()
             for i, row in enumerate(rows):
-                fiche_id, attribution, type_, valeur, localite, periode, image_monnaie_blob, image_gravure_blob = row
+                fiche_id, attribution, type_, valeur, localite, periode, miniature = row
                 tags = ("even",) if i % 2 == 0 else ("odd",)
-                image_blob = image_monnaie_blob if image_monnaie_blob else image_gravure_blob
                 photo = None
-                if image_blob:
+                if miniature:
                     try:
-                        image = Image.open(io.BytesIO(image_blob))
-                        image = image.resize((self.taille_miniature, self.taille_miniature), Image.LANCZOS)
-                        photo = ImageTk.PhotoImage(image)
-                        self.tree_images[fiche_id] = (photo, image_blob)
+                        photo = ImageTk.PhotoImage(Image.open(io.BytesIO(miniature)))
+                        self.tree_images[fiche_id] = photo
                     except Exception as e:
                         print(f"Erreur image pour ID {fiche_id}: {e}")
                 if photo:
@@ -939,23 +1030,20 @@ class MonnaiesApp:
                 with sqlite3.connect("data/monnaies.db") as conn:
                     cursor = conn.cursor()
                     cursor.execute(
-                        f"SELECT id, attribution, type, valeur_faciale, localite, periode_annee, image_monnaie, image_gravure FROM monnaies WHERE {condition} ORDER BY ordre",
+                        f"SELECT id, attribution, type, valeur_faciale, localite, periode_annee, miniature FROM monnaies WHERE {condition} ORDER BY ordre",
                         (valeur,))
                     rows = cursor.fetchall()
                 for row in self.tree_recherche.get_children():
                     self.tree_recherche.delete(row)
                 self.tree_images_recherche = {}
                 for i, row in enumerate(rows):
-                    fiche_id, attribution, type_, valeur, localite, periode, image_monnaie_blob, image_gravure_blob = row
+                    fiche_id, attribution, type_, valeur, localite, periode, miniature = row
                     tags = ("even",) if i % 2 == 0 else ("odd",)
-                    image_blob = image_monnaie_blob if image_monnaie_blob else image_gravure_blob
                     photo = None
-                    if image_blob:
+                    if miniature:
                         try:
-                            image = Image.open(io.BytesIO(image_blob))
-                            image = image.resize((self.taille_miniature, self.taille_miniature), Image.LANCZOS)
-                            photo = ImageTk.PhotoImage(image)
-                            self.tree_images_recherche[fiche_id] = (photo, image_blob)
+                            photo = ImageTk.PhotoImage(Image.open(io.BytesIO(miniature)))
+                            self.tree_images_recherche[fiche_id] = photo
                         except Exception as e:
                             print(f"Erreur image pour ID {fiche_id}: {e}")
                     if photo:
@@ -982,7 +1070,7 @@ class MonnaiesApp:
                 with sqlite3.connect("data/monnaies.db") as conn:
                     cursor = conn.cursor()
                     cursor.execute(
-                        f"SELECT id, {db_champ}, image_monnaie, image_gravure FROM monnaies WHERE id IN ({placeholders})",
+                        f"SELECT id, {db_champ}, miniature FROM monnaies WHERE id IN ({placeholders})",
                         ids)
                     fiches = {row[0]: row[1:] for row in cursor.fetchall()}
             except sqlite3.Error as e:
@@ -1002,18 +1090,15 @@ class MonnaiesApp:
                 fiche_id = row[0]
                 tags = ("even",) if i % 2 == 0 else ("odd",)
                 self.tree_recherche.insert("", tk.END, values=row, iid=fiche_id, tags=tags)
-                image_monnaie_blob, image_gravure_blob = fiches[fiche_id][1:]
-                image_blob = image_monnaie_blob if image_monnaie_blob else image_gravure_blob
-                if not image_blob:
+                miniature = fiches[fiche_id][1]
+                if not miniature:
                     continue
                 try:
-                    image = Image.open(io.BytesIO(image_blob))
-                    image = image.resize((self.taille_miniature, self.taille_miniature), Image.LANCZOS)
-                    photo = ImageTk.PhotoImage(image)
+                    photo = ImageTk.PhotoImage(Image.open(io.BytesIO(miniature)))
                 except Exception as e:
                     print(f"Erreur image pour ID {fiche_id}: {e}")
                     continue
-                self.tree_images_recherche[fiche_id] = (photo, image_blob)
+                self.tree_images_recherche[fiche_id] = photo
                 self.tree_recherche.item(fiche_id, image=photo)
 
     @staticmethod
@@ -1054,5 +1139,8 @@ if __name__ == "__main__":
     os.makedirs("data", exist_ok=True)
     init_db()
     root = tk.Tk()
+    root.withdraw()
+    migrate_miniatures(root)
+    root.deiconify()
     app = MonnaiesApp(root)
     root.mainloop()
