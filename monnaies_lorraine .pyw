@@ -1047,56 +1047,61 @@ class MonnaiesApp:
             for item in self.tree_recherche.get_children():
                 values = self.tree_recherche.item(item)["values"]
                 current_results.append(values)
+            ids = [row[0] for row in current_results]
+            placeholders = ", ".join("?" * len(ids))
+            try:
+                with sqlite3.connect("data/monnaies.db") as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        f"SELECT id, {db_champ}, image_monnaie, image_gravure FROM monnaies WHERE id IN ({placeholders})",
+                        ids)
+                    fiches = {row[0]: row[1:] for row in cursor.fetchall()}
+            except sqlite3.Error as e:
+                messagebox.showerror("Erreur", f"Impossible de filtrer les résultats : {e}")
+                return
             filtered_results = []
             for row in current_results:
-                row_id = row[0]
-                try:
-                    with sqlite3.connect("data/monnaies.db") as conn:
-                        cursor = conn.cursor()
-                        cursor.execute(f"SELECT {db_champ} FROM monnaies WHERE id=?", (row_id,))
-                        field_value = cursor.fetchone()[0]
-                        if field_value is None:
-                            field_value = ""
-                        if type_recherche == "Identique":
-                            if str(field_value).lower() == valeur.lower():
-                                filtered_results.append(row)
-                        elif type_recherche == "Commence par":
-                            if str(field_value).lower().startswith(valeur.lower()):
-                                filtered_results.append(row)
-                        elif type_recherche == "Contient":
-                            if valeur.lower() in str(field_value).lower():
-                                filtered_results.append(row)
-                        elif type_recherche == "Finit par":
-                            if str(field_value).lower().endswith(valeur.lower()):
-                                filtered_results.append(row)
-                        elif type_recherche == "Ne contient pas":
-                            if valeur.lower() not in str(field_value).lower():
-                                filtered_results.append(row)
-                except sqlite3.Error as e:
-                    messagebox.showerror("Erreur", f"Impossible de filtrer les résultats : {e}")
-                    return
+                fiche = fiches.get(row[0])
+                if fiche is None:
+                    continue
+                field_value = str(fiche[0]) if fiche[0] is not None else ""
+                if self.match_recherche(field_value, valeur, type_recherche):
+                    filtered_results.append(row)
             for row in self.tree_recherche.get_children():
                 self.tree_recherche.delete(row)
             for i, row in enumerate(filtered_results):
                 fiche_id = row[0]
                 tags = ("even",) if i % 2 == 0 else ("odd",)
                 self.tree_recherche.insert("", tk.END, values=row, iid=fiche_id, tags=tags)
+                image_monnaie_blob, image_gravure_blob = fiches[fiche_id][1:]
+                image_blob = image_monnaie_blob if image_monnaie_blob else image_gravure_blob
+                if not image_blob:
+                    continue
                 try:
-                    with sqlite3.connect("data/monnaies.db") as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT image_monnaie, image_gravure FROM monnaies WHERE id=?", (fiche_id,))
-                        image_monnaie_blob, image_gravure_blob = cursor.fetchone()
-                        image_blob = image_monnaie_blob if image_monnaie_blob else image_gravure_blob
-                        photo = None
-                        if image_blob:
-                            image = Image.open(io.BytesIO(image_blob))
-                            image = image.resize((self.taille_miniature, self.taille_miniature), Image.LANCZOS)
-                            photo = ImageTk.PhotoImage(image)
-                            self.tree_images_recherche[fiche_id] = (photo, image_blob)
-                        if photo:
-                            self.tree_recherche.item(fiche_id, image=photo)
+                    image = Image.open(io.BytesIO(image_blob))
+                    image = image.resize((self.taille_miniature, self.taille_miniature), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(image)
                 except Exception as e:
-                    pass
+                    print(f"Erreur image pour ID {fiche_id}: {e}")
+                    continue
+                self.tree_images_recherche[fiche_id] = (photo, image_blob)
+                self.tree_recherche.item(fiche_id, image=photo)
+
+    @staticmethod
+    def match_recherche(field_value, valeur, type_recherche):
+        field_value = field_value.lower()
+        valeur = valeur.lower()
+        if type_recherche == "Identique":
+            return field_value == valeur
+        if type_recherche == "Commence par":
+            return field_value.startswith(valeur)
+        if type_recherche == "Contient":
+            return valeur in field_value
+        if type_recherche == "Finit par":
+            return field_value.endswith(valeur)
+        if type_recherche == "Ne contient pas":
+            return valeur not in field_value
+        return False
 
     def reorder_fiches(self):
         if not messagebox.askyesno(
