@@ -5,6 +5,8 @@ import sqlite3
 import os
 import io
 
+ORDRE_PAS = 100
+
 
 def init_db():
     with sqlite3.connect("data/monnaies.db") as conn:
@@ -40,7 +42,12 @@ def init_db():
             conn.commit()
             return
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_periode ON monnaies(periode_annee)')
-        cursor.execute("PRAGMA table_info(monnaies)")
+        conn.commit()
+
+
+def reorder_all_fiches():
+    with sqlite3.connect("data/monnaies.db") as conn:
+        cursor = conn.cursor()
         cursor.execute('''
             WITH ordered AS (
                 SELECT
@@ -50,7 +57,7 @@ def init_db():
                          substr(valeur_faciale, instr(valeur_faciale, ' ') + 1, 1) DESC,
                           CAST(substr(valeur_faciale, 1, instr(valeur_faciale, ' ') - 1) AS INTEGER),
                            attribution
-                    ) * 100 AS new_order
+                    ) * ? AS new_order
                 FROM monnaies
                 )
                 UPDATE monnaies
@@ -59,7 +66,7 @@ def init_db():
                         FROM ordered
                         WHERE ordered.id = monnaies.id
                     )
-        ''')
+        ''', (ORDRE_PAS,))
         conn.commit()
 
 
@@ -146,7 +153,6 @@ class FicheDetailWindow:
         self.attribution_combobox = ttk.Combobox(self.fields_frame, width=38, state="normal")
         self.attribution_combobox.grid(row=1, column=1, sticky=tk.W, pady=2)
         self.attribution_combobox.bind("<<ComboboxSelected>>", self.on_attribution_change)
-        self.attribution_combobox.bind("<FocusOut>", self.on_attribution_change)
         ttk.Button(self.fields_frame, text="Biographie", command=self.open_biographie).grid(row=1, column=2,
                                                                                             sticky=tk.W, padx=5, pady=2)
         ttk.Label(self.fields_frame, text="Type", font=("Times New Roman", 10, "bold italic")).grid(row=2, column=0,
@@ -399,9 +405,16 @@ class FicheDetailWindow:
         except Exception as e:
             messagebox.showerror("Erreur", f"Erreur d'affichage : {e}")
 
+    def ensure_biographie_loaded(self):
+        if not self.biographie_text_content and not self.biographie_image_blob:
+            attribution = self.attribution_combobox.get()
+            if attribution:
+                self.load_biographie_by_attribution(attribution)
+
     def save_fiche(self):
         if not self.validate_required_fields():
             return False
+        self.ensure_biographie_loaded()
         try:
             try:
                 poids = float(self.poids_entry.get()) if self.poids_entry.get() else None
@@ -450,19 +463,13 @@ class FicheDetailWindow:
                         data["observations"], data["image_gravure"], data["image_monnaie"],
                         data["biographie"], data["image_biographie"], self.fiche_id
                     ))
-                    self.update_all_fiches_with_same_attribution(data["attribution"], data["biographie"],
-                                                                 data["image_biographie"])
                 else:
-                    # --- CORRECTION ICI : Gestion de l'ordre pour l'insertion ---
                     if self.insert_after_id:
-                        cursor.execute("SELECT ordre FROM monnaies WHERE id=?", (self.insert_after_id,))
-                        ref_order = cursor.fetchone()[0]
-                        cursor.execute("UPDATE monnaies SET ordre = ordre + 1 WHERE ordre >= ?", (ref_order,))
-                        new_order = ref_order
+                        new_order = self.compute_insert_order(cursor, self.insert_after_id)
                     else:
                         cursor.execute("SELECT MAX(ordre) FROM monnaies")
                         max_order = cursor.fetchone()[0]
-                        new_order = max_order + 1 if max_order is not None else 0
+                        new_order = max_order + ORDRE_PAS if max_order is not None else 0
 
                     cursor.execute('''
                         INSERT INTO monnaies (
@@ -495,20 +502,24 @@ class FicheDetailWindow:
             messagebox.showerror("Erreur", f"Impossible d'enregistrer la fiche : {e}")
             return False
 
-    def update_all_fiches_with_same_attribution(self, attribution, biographie, image_biographie):
-        try:
-            with sqlite3.connect("data/monnaies.db") as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE monnaies SET biographie=?, image_biographie=? WHERE attribution=?",
-                               (biographie, image_biographie, attribution))
-                conn.commit()
-        except sqlite3.Error as e:
-            messagebox.showerror("Erreur", f"Impossible de mettre à jour les fiches avec la même attribution : {e}")
+    @staticmethod
+    def compute_insert_order(cursor, insert_after_id):
+        cursor.execute("SELECT ordre FROM monnaies WHERE id=?", (insert_after_id,))
+        ref_order = cursor.fetchone()[0]
+        cursor.execute("SELECT MIN(ordre) FROM monnaies WHERE ordre > ?", (ref_order,))
+        next_order = cursor.fetchone()[0]
+        if next_order is None:
+            return ref_order + ORDRE_PAS
+        if next_order - ref_order > 1:
+            return ref_order + (next_order - ref_order) // 2
+        cursor.execute("UPDATE monnaies SET ordre = ordre + ? WHERE ordre > ?", (ORDRE_PAS, ref_order))
+        return ref_order + ORDRE_PAS // 2
 
     def open_biographie(self):
         if not self.fiche_id:
             if not self.save_fiche():
                 return
+        self.ensure_biographie_loaded()
         self.biographie_window = tk.Toplevel(self.window)
         self.biographie_window.title(f"Biographie - {self.attribution_combobox.get()}")
         self.biographie_window.geometry("800x750")
@@ -629,6 +640,7 @@ class MonnaiesApp:
         ttk.Button(self.button_frame, text="Insérer une fiche", command=self.insert_fiche).pack(side=tk.LEFT, padx=5)
         ttk.Button(self.button_frame, text="Supprimer la fiche", command=self.delete_fiche).pack(side=tk.LEFT, padx=5)
         ttk.Button(self.button_frame, text="Actualiser", command=self.load_data).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.button_frame, text="Réordonner", command=self.reorder_fiches).pack(side=tk.LEFT, padx=5)
         ttk.Button(self.button_frame, text="Quitter", command=self.quit_app).pack(side=tk.RIGHT, padx=5)
         self.notebook = ttk.Notebook(self.main_container)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=0)
@@ -1085,6 +1097,19 @@ class MonnaiesApp:
                             self.tree_recherche.item(fiche_id, image=photo)
                 except Exception as e:
                     pass
+
+    def reorder_fiches(self):
+        if not messagebox.askyesno(
+                "Réordonner",
+                "Voulez-vous vraiment reclasser toutes les fiches par période, valeur faciale et attribution ? "
+                "L'ordre obtenu par insertion manuelle sera perdu."):
+            return
+        try:
+            reorder_all_fiches()
+        except sqlite3.Error as e:
+            messagebox.showerror("Erreur", f"Impossible de réordonner les fiches : {e}")
+            return
+        self.load_data()
 
     def quit_app(self):
         if messagebox.askyesno("Quitter", "Voulez-vous vraiment quitter l'application ?"):
