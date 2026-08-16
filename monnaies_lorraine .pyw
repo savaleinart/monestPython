@@ -1178,8 +1178,11 @@ class AccueilWindow:
         self.canvas.pack()
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
         self.surbrillance = self.canvas.create_oval(0, 0, 0, 0, outline="#FFD700", width=4, state=tk.HIDDEN)
-        self.etiquette = self.canvas.create_text(self.largeur // 2, self.hauteur - 20, text="",
-                                                 fill="#FFD700", font=("Times New Roman", 16, "bold"))
+        self.fond_etiquette = self.canvas.create_rectangle(0, 0, 0, 0, fill="#2B1B0E", outline="",
+                                                           state=tk.HIDDEN)
+        self.etiquette = self.canvas.create_text(0, 0, text="", justify=tk.CENTER,
+                                                 fill="#FFD700", font=("Times New Roman", 16, "bold"),
+                                                 state=tk.HIDDEN)
         self.canvas.bind("<Motion>", self.on_motion)
         self.canvas.bind("<Button-1>", self.on_click)
 
@@ -1194,15 +1197,22 @@ class AccueilWindow:
     def on_motion(self, event):
         disque = self.disque_sous_curseur(event.x, event.y)
         if not disque:
-            self.canvas.itemconfig(self.surbrillance, state=tk.HIDDEN)
-            self.canvas.itemconfig(self.etiquette, text="")
+            for item in (self.surbrillance, self.fond_etiquette, self.etiquette):
+                self.canvas.itemconfig(item, state=tk.HIDDEN)
             self.canvas.config(cursor="")
             return
         centre_x, centre_y, rayon, _, libelle = disque
         self.canvas.coords(self.surbrillance,
                            centre_x - rayon, centre_y - rayon, centre_x + rayon, centre_y + rayon)
-        self.canvas.itemconfig(self.surbrillance, state=tk.NORMAL)
-        self.canvas.itemconfig(self.etiquette, text=libelle)
+        # Le libelle est centre sur le disque, sur un fond opaque pour rester lisible
+        # par-dessus le relief de la monnaie.
+        self.canvas.coords(self.etiquette, centre_x, centre_y)
+        self.canvas.itemconfig(self.etiquette, text=libelle, width=1.5 * rayon, state=tk.NORMAL)
+        x1, y1, x2, y2 = self.canvas.bbox(self.etiquette)
+        self.canvas.coords(self.fond_etiquette, x1 - 8, y1 - 4, x2 + 8, y2 + 4)
+        for item in (self.surbrillance, self.fond_etiquette):
+            self.canvas.itemconfig(item, state=tk.NORMAL)
+        self.canvas.tag_raise(self.etiquette)
         self.canvas.config(cursor="hand2")
 
     def on_click(self, event):
