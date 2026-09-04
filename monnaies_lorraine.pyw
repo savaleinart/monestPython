@@ -246,7 +246,7 @@ class FicheDetailWindow:
                                                                                                            column=0,
                                                                                                            sticky=tk.W,
                                                                                                            pady=2)
-        self.attribution_combobox = ttk.Combobox(self.fields_frame, width=38, state="normal")
+        self.attribution_combobox = ttk.Combobox(self.fields_frame, width=38, state="normal", font=("Times New Roman", 10,"bold"))
         self.attribution_combobox.grid(row=1, column=1, sticky=tk.W, pady=2)
         self.attribution_combobox.bind("<<ComboboxSelected>>", self.on_attribution_change)
         ttk.Button(self.fields_frame, text="Biographie", command=self.open_biographie).grid(row=1, column=2,
@@ -795,6 +795,13 @@ class MonnaiesApp:
             columns=("ID", "Attribution", "Type", "Valeur Faciale", "Localité", "Période"),
             show="tree headings",
             style="Custom.Treeview"
+        )
+
+        style = ttk.Style()
+
+        style.configure(
+            "Treeview.Heading",
+            font=("Times New Roman", 12, "bold")
         )
         self.tree_liste.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar = ttk.Scrollbar(self.liste_container, orient=tk.VERTICAL, command=self.tree_liste.yview)
