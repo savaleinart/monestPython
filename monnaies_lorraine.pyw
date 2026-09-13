@@ -7,7 +7,7 @@ import io
 
 ORDRE_PAS = 100
 TAILLE_MINIATURE = 40
-IMAGE_ACCUEIL = "Présentation.jpg"
+IMAGE_ACCUEIL = "menu.jpg"
 ONGLET_LISTE = 0
 ONGLET_RECHERCHE = 1
 # Disques cliquables de l'image d'accueil : (centre x, centre y, rayon) en fraction
@@ -259,7 +259,7 @@ class FicheDetailWindow:
                                                                                                               column=0,
                                                                                                               sticky=tk.W,
                                                                                                               pady=2)
-        self.valeur_combobox = ttk.Combobox(self.fields_frame, width=13, state="normal")
+        self.valeur_combobox = ttk.Combobox(self.fields_frame, width=28, state="normal")
         self.valeur_combobox.grid(row=3, column=1, sticky=tk.W, pady=2)
         ttk.Label(self.fields_frame, text="Localité", font=("Times New Roman", 10, "bold italic")).grid(row=4, column=0,
                                                                                                         sticky=tk.W,
@@ -276,7 +276,7 @@ class FicheDetailWindow:
                                                                                                              column=0,
                                                                                                              sticky=tk.W,
                                                                                                              pady=2)
-        self.legende_avers_entry = ttk.Entry(self.fields_frame, width=100)
+        self.legende_avers_entry = ttk.Entry(self.fields_frame, width=100, font=("Times New Roman", 10,"bold"))
         self.legende_avers_entry.grid(row=6, column=1, columnspan=2, sticky=tk.W, pady=2)
         ttk.Label(self.fields_frame, text="Description Avers", font=("Times New Roman", 10, "bold italic")).grid(row=7,
                                                                                                                  column=0,
@@ -289,7 +289,7 @@ class FicheDetailWindow:
                                                                                                               column=0,
                                                                                                               sticky=tk.W,
                                                                                                               pady=2)
-        self.legende_revers_entry = ttk.Entry(self.fields_frame, width=100)
+        self.legende_revers_entry = ttk.Entry(self.fields_frame, width=100, font=("Times New Roman", 10,"bold"))
         self.legende_revers_entry.grid(row=8, column=1, columnspan=2, sticky=tk.W, pady=2)
         ttk.Label(self.fields_frame, text="Description Revers", font=("Times New Roman", 10, "bold italic")).grid(row=9,
                                                                                                                   column=0,
@@ -864,7 +864,7 @@ class MonnaiesApp:
             values=[
                 "Attribution", "Type", "Valeur faciale", "Localité", "Période/Année",
                 "Légende Avers", "Description Avers", "Légende Revers", "Description Revers",
-                "Atelier", "Ouvrage Numismatique", "Observations"
+                "Atelier", "Ouvrage Numismatique", "Observations", "Possession"
             ],
             font=("Times New Roman", 10)
         )
@@ -874,7 +874,7 @@ class MonnaiesApp:
                                                                                             pady=5)
         self.recherche_type = ttk.Combobox(
             criteria_frame,
-            values=["Identique", "Commence par", "Contient", "Finit par", "Ne contient pas"],
+            values=["Identique", "Commence par", "Contient", "Finit par", "Ne contient pas", "Est vrai", "Est faux"],
             font=("Times New Roman", 10)
         )
         self.recherche_type.grid(row=0, column=3, padx=5, pady=5)
@@ -1040,8 +1040,9 @@ class MonnaiesApp:
         valeur = self.recherche_valeur.get()
         rechercher_dans_resultats = self.recherche_dans_resultats_var.get()
         if not champ or not valeur:
-            messagebox.showwarning("Attention", "Veuillez sélectionner un champ et une valeur.")
-            return
+            if type_recherche != "Est vrai" and type_recherche != "Est faux":
+                messagebox.showwarning("Attention", "Veuillez sélectionner un champ et une valeur.")
+                return
         champ_map = {
             "Attribution": "attribution",
             "Type": "type",
@@ -1054,7 +1055,8 @@ class MonnaiesApp:
             "Description Revers": "description_revers",
             "Atelier": "atelier",
             "Ouvrage Numismatique": "ouvrage_numismatique",
-            "Observations": "observations"
+            "Observations": "observations",
+            "Possession": "possession",
         }
         db_champ = champ_map.get(champ, "attribution")
         if not rechercher_dans_resultats:
@@ -1072,12 +1074,20 @@ class MonnaiesApp:
             elif type_recherche == "Ne contient pas":
                 condition = f"{db_champ} NOT LIKE ?"
                 valeur = "%" + valeur + "%"
+            elif type_recherche == "Est vrai":
+                condition = f"{db_champ} = 1"
+            elif type_recherche == "Est faux":
+                condition = f"{db_champ} = 0"
             try:
+                if type_recherche != "Est vrai" and type_recherche != "Est faux":
+                    parametres = [valeur]
+                else:
+                    parametres = []
                 with sqlite3.connect("data/monnaies.db") as conn:
                     cursor = conn.cursor()
                     cursor.execute(
                         f"SELECT id, attribution, type, valeur_faciale, localite, periode_annee, miniature FROM monnaies WHERE {condition} ORDER BY ordre",
-                        (valeur,))
+                        parametres)
                     rows = cursor.fetchall()
                 for row in self.tree_recherche.get_children():
                     self.tree_recherche.delete(row)
